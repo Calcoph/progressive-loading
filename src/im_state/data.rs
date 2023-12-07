@@ -29,7 +29,8 @@ pub struct ServerData {
     pub send_stage: SendStage
 }
 
-const DEFAULT_IMAGE: &'static str = "flores.jpg";
+//const DEFAULT_IMAGE: &'static str = "flores.jpg";
+const DEFAULT_IMAGE: &'static str = "depositphotos_70604961-stock-photo-loberia-argentina.webp";
 
 impl ServerData {
     fn new(device: &Device, renderer: &mut Renderer, queue: &Queue) -> ServerData {
@@ -69,7 +70,12 @@ impl ServerData {
             // /4 * 4 == noop
         };
         let mut v = Vec::with_capacity(v_size);
-        let mut x = 0;
+        let start_x = if self.send_stage == SendStage::init() {
+            0
+        } else {
+            y_step
+        };
+        let mut x = start_x;
         let mut y = 0;
         let height = self.sending_image.height();
         let width = self.sending_image.width();
@@ -80,12 +86,15 @@ impl ServerData {
                 v.extend(pixel.0.as_slice());
                 x += x_step;
             }
-            x = 0;
+            if x_step != y_step {
+                x = 0;
+            } else {
+                x = start_x;
+            }
             y += y_step;
         }
 
         self.send_stage.next().unwrap();
-        dbg!(v.len());
         v
     }
 
@@ -153,14 +162,18 @@ impl ClientData {
             i += 4;
         };
 
-        let mut x = 0;
+        let start_x = if self.send_stage == SendStage::init() {
+            0
+        } else {
+            y_step
+        };
+        let mut x = start_x;
         let mut y = 0;
-        if self.send_stage != SendStage::init() {
-            x = y_step;
-        }
         let width = self.size[0] as u32;
         let height = self.size[1] as u32;
         for pixel in pixels.into_iter() {
+            if y < height && x < width {
+            }
             for _ in 0..y_step {
                 if y < height {
                     for _ in 0..y_step {
@@ -173,21 +186,18 @@ impl ClientData {
                 }
                 y += 1
             }
-            x += y_step;
             y -= y_step;
-            let pixel_y = y / self.send_stage.y_step();
+            let pixel_y = y / y_step;
             let x_step = self.send_stage.x_step(pixel_y);
+            x += x_step;
             if x+1 > width {
                 x = 0;
                 y += y_step;
-                let pixel_y = y / self.send_stage.y_step();
+                let pixel_y = y / y_step;
                 let x_step = self.send_stage.x_step(pixel_y);
                 if y_step != x_step {
-                    x += y_step;
+                    x += start_x;
                 }
-            } else {
-                x -= y_step;
-                x += x_step;
             }
         }
 

@@ -173,7 +173,7 @@ fn render_state(view: &wgpu::TextureView, state: &mut TeState, gpu: &GpuState) {
 fn receiver_window(ui: &mut imgui::Ui, data: &ClientData) -> Option<ActionTaken> {
     let mut action = None;
     ui.window("Receiver").build(|| {
-        imgui::Image::new(data.texture_id, data.size).build(ui);
+        imgui::Image::new(data.texture_id, data.size).border_col([1.0, 1.0, 1.0, 1.0]).build(ui);
         if ui.button("Clear") {
             action = Some(ActionTaken::Clear)
         }
