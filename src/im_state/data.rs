@@ -26,7 +26,7 @@ pub struct ServerData {
     sending_image: ImageBuffer<Rgba<u8>, Vec<u8>>,
     pub image_size: [f32; 2],
     pub texture_id: TextureId,
-    send_stage: SendStage
+    pub send_stage: SendStage
 }
 
 const DEFAULT_IMAGE: &'static str = "flores.jpg";
@@ -34,7 +34,14 @@ const DEFAULT_IMAGE: &'static str = "flores.jpg";
 impl ServerData {
     fn new(device: &Device, renderer: &mut Renderer, queue: &Queue) -> ServerData {
         let sending_image = image::open(DEFAULT_IMAGE).unwrap();
-        let sending_image = sending_image.to_rgba8();
+        let mut sending_image = sending_image.to_rgba8();
+        for pixel in sending_image.pixels_mut() {
+            unsafe {
+                let r: *mut u8 = &mut pixel.0[0];
+                let b: *mut u8 = &mut pixel.0[2];
+                std::ptr::swap(r, b)
+            }
+        }
         let width = sending_image.width();
         let height = sending_image.height();
 
@@ -49,14 +56,39 @@ impl ServerData {
     }
 
     pub fn send(&mut self) -> Vec<u8> {
-        let step = self.send_stage.step();
-        self.send_stage.next().unwrap();
+        let y_step = self.send_stage.y_step();
 
-        todo!()
+        let v_size = if self.send_stage == SendStage::init() {
+            (self.image_size[0]/y_step as f32).ceil() as usize
+            * (self.image_size[1]/y_step as f32).ceil() as usize
+        } else {
+            (self.image_size[0]/y_step as f32).ceil() as usize
+            * (self.image_size[1]/y_step as f32).ceil() as usize
+            * 3
+            / 4
+        };
+        let mut v = Vec::with_capacity(v_size);
+        let mut x = 0;
+        let mut y = 0;
+        let height = self.sending_image.height();
+        let width = self.sending_image.width();
+        while y < height {
+            let x_step = self.send_stage.x_step(y);
+            while x < width {
+                let pixel = self.sending_image.get_pixel(x, y);
+                v.extend(pixel.0.as_slice());
+                x += x_step;
+            }
+            x = 0;
+            y += y_step;
+        }
+
+        self.send_stage.next().unwrap();
+        v
     }
 
-    pub(crate) fn clear(&self) {
-        todo!()
+    pub(crate) fn clear(&mut self) {
+        self.send_stage = SendStage::init()
     }
 }
 
@@ -108,8 +140,60 @@ impl ClientData {
         }
     }
 
-    pub fn receive(&mut self, data: &[u8]) {
-        todo!()
+    pub fn receive(&mut self, device: &Device, renderer: &mut Renderer, queue: &Queue, data: &[u8]) {
+        let y_step = self.send_stage.y_step();
+
+        let mut pixels = Vec::with_capacity(data.len()/4);
+        let mut i = 0;
+        while i+3 < data.len() {
+            let pixel: Rgba<u8> = [data[i], data[i+1], data[i+2], data[i+3]].into();
+            pixels.push(pixel);
+            i += 4;
+        };
+
+        let mut x = 0;
+        let mut y = 0;
+        if self.send_stage != SendStage::init() {
+            x = y_step;
+        }
+        let width = self.size[0] as u32;
+        let height = self.size[1] as u32;
+        //self.receiving_image = ImageBuffer::new(width, height);
+        for pixel in pixels.into_iter() {
+            if y < height && x < width {
+            }
+            for _ in 0..y_step {
+                if y < height {
+                    for _ in 0..y_step {
+                        if x < width {
+                            self.receiving_image.put_pixel(x, y, pixel);
+                        }
+                        x += 1
+                    }
+                    x -= y_step;
+                }
+                y += 1
+            }
+            x += y_step;
+            y -= y_step;
+            let pixel_y = y / self.send_stage.y_step();
+            let x_step = self.send_stage.x_step(pixel_y);
+            if x+1 >= width {
+                x = 0;
+                y += y_step;
+                let pixel_y = y / self.send_stage.y_step();
+                let x_step = self.send_stage.x_step(pixel_y);
+                if y_step != x_step {
+                    x += y_step;
+                }
+            } else {
+                x -= y_step;
+                x += x_step;
+            }
+        }
+
+        self.send_stage.next().unwrap();
+        self.texture_id = get_texture_id(device, renderer, queue, width, height, &self.receiving_image.as_raw());
     }
 
     pub(crate) fn clear(&mut self, device: &Device, renderer: &mut Renderer, queue: &Queue) {
@@ -120,17 +204,20 @@ impl ClientData {
 
         self.texture_id = texture_id;
         self.receiving_image = receiving_image;
+        self.send_stage = SendStage::init();
     }
 }
 
-enum SendStage {
+#[derive(Debug, PartialEq, Eq)]
+pub enum SendStage {
     S64x64,
     S32x32,
     S16x16,
     S8x8,
     S4x4,
     S2x2,
-    S1x1
+    S1x1,
+    End
 }
 
 impl SendStage {
@@ -146,13 +233,14 @@ impl SendStage {
             SendStage::S8x8 => *self = SendStage::S4x4,
             SendStage::S4x4 => *self = SendStage::S2x2,
             SendStage::S2x2 => *self = SendStage::S1x1,
-            SendStage::S1x1 => return Err(()),
+            SendStage::S1x1 => *self = SendStage::End,
+            SendStage::End => return Err(()),
         }
 
         Ok(())
     }
 
-    fn step(&self) -> u32 {
+    fn y_step(&self) -> u32 {
         match self {
             SendStage::S64x64 => 64,
             SendStage::S32x32 => 32,
@@ -161,6 +249,57 @@ impl SendStage {
             SendStage::S4x4 => 4,
             SendStage::S2x2 => 2,
             SendStage::S1x1 => 1,
+            SendStage::End => panic!(),
+        }
+    }
+
+    fn x_step(&self, y: u32) -> u32 {
+        match self {
+            SendStage::S64x64 => 64,
+            SendStage::S32x32 => if y % 2 == 0 {
+                64
+            } else {
+                32
+            },
+            SendStage::S16x16 => if y % 2 == 0 {
+                32
+            } else {
+                16
+            },
+            SendStage::S8x8 => if y % 2 == 0 {
+                16
+            } else {
+                8
+            },
+            SendStage::S4x4 => if y % 2 == 0 {
+                8
+            } else {
+                4
+            },
+            SendStage::S2x2 => if y % 2 == 0 {
+                4
+            } else {
+                2
+            },
+            SendStage::S1x1 => if y % 2 == 0 {
+                2
+            } else {
+                1
+            },
+            SendStage::End => panic!(),
+        }
+    }
+
+    fn previous(&self) -> Option<SendStage> {
+        match self {
+            SendStage::S64x64 => None,
+            SendStage::S32x32 => Some(SendStage::S64x64),
+            SendStage::S16x16 => Some(SendStage::S32x32),
+            SendStage::S8x8 => Some(SendStage::S16x16),
+            SendStage::S4x4 => Some(SendStage::S8x8),
+            SendStage::S2x2 => Some(SendStage::S4x4),
+            SendStage::S1x1 => Some(SendStage::S2x2),
+            SendStage::End => Some(SendStage::S1x1),
         }
     }
 }

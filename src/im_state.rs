@@ -6,7 +6,7 @@ use winit::{window::Window, event::WindowEvent};
 
 use crate::ActionTaken;
 
-use self::data::{DataState, ServerData, ClientData};
+use self::data::{DataState, ServerData, ClientData, SendStage};
 mod data;
 
 pub struct ImState {
@@ -119,7 +119,7 @@ impl ImState {
 
     pub(crate) fn send(&mut self) {
         let data = self.data.server.send();
-        self.data.client.receive(&data);
+        self.data.client.receive(&self.gpu.device, &mut self.renderer, &self.gpu.queue, &data);
     }
 
     pub(crate) fn clear(&mut self) {
@@ -187,9 +187,11 @@ fn sender_window(ui: &mut imgui::Ui, data: &ServerData) -> Option<ActionTaken> {
     ui.window("Sender").build(|| {
         let size = [data.image_size[0] / 4.0, data.image_size[1] / 4.0];
         imgui::Image::new(data.texture_id, size).build(ui);
-        if ui.button("Send") {
-            action = Some(ActionTaken::Send)
-        }
+        ui.disabled(data.send_stage == SendStage::End, || {
+            if ui.button("Send") {
+                action = Some(ActionTaken::Send)
+            }
+        })
     });
 
     action
