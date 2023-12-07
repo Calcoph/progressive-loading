@@ -160,10 +160,7 @@ impl ClientData {
         }
         let width = self.size[0] as u32;
         let height = self.size[1] as u32;
-        //self.receiving_image = ImageBuffer::new(width, height);
         for pixel in pixels.into_iter() {
-            if y < height && x < width {
-            }
             for _ in 0..y_step {
                 if y < height {
                     for _ in 0..y_step {
@@ -180,7 +177,7 @@ impl ClientData {
             y -= y_step;
             let pixel_y = y / self.send_stage.y_step();
             let x_step = self.send_stage.x_step(pixel_y);
-            if x+1 >= width {
+            if x+1 > width {
                 x = 0;
                 y += y_step;
                 let pixel_y = y / self.send_stage.y_step();
