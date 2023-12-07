@@ -1,0 +1,27 @@
+[package]
+name = "progressive-loading"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+image = "0.24.3"
+pollster = "0.3"
+winit = {version = "0.29.4", features = ["rwh_05"]}
+env_logger = "0.10"
+wgpu = "0.18"
+
+imgui = { version = "0.11.0", features = ["docking"] }
+imgui-wgpu = { version = "0.24.0" }
+imgui-winit-support = { version = "0.11.0", default-features = false }
+
+[dependencies.te-renderer]
+git = "https://github.com/Calcoph/Teengine.git"
+rev = "71ae7e0"
+
+[patch.crates-io]
+imgui = { git = "https://github.com/Calcoph/imgui-rs", branch = "uptodate-winit" }
+imgui-winit-support = { git = "https://github.com/Calcoph/imgui-rs", branch = "uptodate-winit" }
+imgui-wgpu = { git = "https://github.com/Calcoph/imgui-wgpu-rs", rev = "53abff5" }
+wgpu_glyph = { git = "https://github.com/Calcoph/wgpu_glyph", rev = "967d062" }
