@@ -61,11 +61,12 @@ impl ServerData {
         let v_size = if self.send_stage == SendStage::init() {
             (self.image_size[0]/y_step as f32).ceil() as usize
             * (self.image_size[1]/y_step as f32).ceil() as usize
+            * 4
         } else {
             (self.image_size[0]/y_step as f32).ceil() as usize
             * (self.image_size[1]/y_step as f32).ceil() as usize
             * 3
-            / 4
+            // /4 * 4 == noop
         };
         let mut v = Vec::with_capacity(v_size);
         let mut x = 0;
@@ -73,7 +74,7 @@ impl ServerData {
         let height = self.sending_image.height();
         let width = self.sending_image.width();
         while y < height {
-            let x_step = self.send_stage.x_step(y);
+            let x_step = self.send_stage.x_step(y/y_step);
             while x < width {
                 let pixel = self.sending_image.get_pixel(x, y);
                 v.extend(pixel.0.as_slice());
@@ -84,6 +85,7 @@ impl ServerData {
         }
 
         self.send_stage.next().unwrap();
+        dbg!(v.len());
         v
     }
 
