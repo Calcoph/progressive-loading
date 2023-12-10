@@ -1,6 +1,6 @@
-use std::mem::size_of;
+use std::borrow::Cow;
 
-use image::{ImageBuffer, Rgb, Rgba};
+use image::{ImageBuffer, Rgba};
 use imgui::TextureId;
 use imgui_wgpu::{Renderer, TextureConfig};
 use wgpu::{Device, Queue};
@@ -26,11 +26,13 @@ pub struct ServerData {
     sending_image: ImageBuffer<Rgba<u8>, Vec<u8>>,
     pub image_size: [f32; 2],
     pub texture_id: TextureId,
-    pub send_stage: SendStage
+    pub send_stage: SendStage,
 }
 
 //const DEFAULT_IMAGE: &'static str = "flores.jpg";
-const DEFAULT_IMAGE: &'static str = "depositphotos_70604961-stock-photo-loberia-argentina.webp";
+//const DEFAULT_IMAGE: &'static str = "depositphotos_70604961-stock-photo-loberia-argentina.webp";
+//const DEFAULT_IMAGE: &'static str = "IMG-20231119-WA0014.jpg";
+const DEFAULT_IMAGE: &'static str = "IMG-20231119-WA0014_4.jpg";
 
 impl ServerData {
     fn new(device: &Device, renderer: &mut Renderer, queue: &Queue) -> ServerData {
@@ -136,7 +138,8 @@ pub struct ClientData {
     pub texture_id: TextureId,
     pub size: [f32; 2],
     receiving_image: ImageBuffer<Rgba<u8>, Vec<u8>>,
-    send_stage: SendStage
+    send_stage: SendStage,
+    pub blur: bool,
 }
 
 impl ClientData {
@@ -147,7 +150,8 @@ impl ClientData {
             texture_id,
             size: [width as f32, height as f32],
             receiving_image,
-            send_stage: SendStage::init()
+            send_stage: SendStage::init(),
+            blur: false
         }
     }
 
@@ -202,7 +206,7 @@ impl ClientData {
         }
 
         self.send_stage.next().unwrap();
-        self.texture_id = get_texture_id(device, renderer, queue, width, height, &self.receiving_image.as_raw());
+        self.update_texture(device, renderer, queue);
     }
 
     pub(crate) fn clear(&mut self, device: &Device, renderer: &mut Renderer, queue: &Queue) {
@@ -215,6 +219,88 @@ impl ClientData {
         self.receiving_image = receiving_image;
         self.send_stage = SendStage::init();
     }
+
+    pub(crate) fn update_texture(&mut self, device: &Device, renderer: &mut Renderer, queue: &Queue) {
+        let width = self.size[0] as u32;
+        let height = self.size[1] as u32;
+
+        let data = if self.blur && self.send_stage != SendStage::End {
+            let mut copy = self.receiving_image.clone();
+            blur(&mut copy);
+            Cow::Owned(copy)
+        } else {
+            Cow::Borrowed(&self.receiving_image)
+        };
+
+        self.texture_id = get_texture_id(device, renderer, queue, width, height, &data);
+    }
+}
+
+fn blur(img: &mut ImageBuffer<Rgba<u8>, Vec<u8>>) {
+    let height = img.height() as i32;
+    let width = img.width() as i32;
+    let xcl = |x: i32| x.clamp(0, width-1) as u32;
+    let ycl = |y: i32| y.clamp(0, height-1) as u32;
+    let copy = img.clone();
+
+    img.enumerate_pixels_mut().for_each(|(x, y, pixel)| {
+        let x = x as i32;
+        let y = y as i32;
+
+        let outer_corners: Vec<_> = vec![-2,2].into_iter()
+            .flat_map(|i| vec![-2, 2].into_iter().map(move |j| (i, j)))
+            .map(|(i, j)| copy.get_pixel(xcl(x+i), ycl(y+j)))
+            .collect();
+
+        let outer_edges: Vec<_> = vec![-2, -1, 1, 2].into_iter()
+            .flat_map(|i| vec![-2, -1, 1, 2].into_iter().map(move |j| (i, j)))
+            .filter(|(i, j)| i != j && *i != -j)
+            .map(|(i, j)| copy.get_pixel(xcl(x+i), ycl(y+j)))
+            .collect();
+
+        let outer_mid_edges: Vec<_> = vec![-2, 0, 2].into_iter()
+            .flat_map(|i| vec![-2, 0, 2].into_iter().map(move |j| (i, j)))
+            .filter(|(i, j)| i != j && *i != -j)
+            .map(|(i, j)| copy.get_pixel(xcl(x+i), ycl(y+j)))
+            .collect();
+
+        let inner_corners: Vec<_> = vec![-1,1].into_iter()
+            .flat_map(|i| vec![-1, 1].into_iter().map(move |j| (i, j)))
+            .map(|(i, j)| copy.get_pixel(xcl(x+i), ycl(y+j)))
+            .collect();
+
+        let inner_edges: Vec<_> = vec![-1, 0, 1].into_iter()
+            .flat_map(|i| vec![-1, 0, 1].into_iter().map(move |j| (i, j)))
+            .filter(|(i, j)| i != j && *i != -j)
+            .map(|(i, j)| copy.get_pixel(xcl(x+i), ycl(y+j)))
+            .collect();
+
+        let r: f32 = gauss(&outer_corners, &outer_edges, &outer_mid_edges, &inner_corners, &inner_edges, pixel, 0);
+        let g: f32 = gauss(&outer_corners, &outer_edges, &outer_mid_edges, &inner_corners, &inner_edges, pixel, 1);
+        let b: f32 = gauss(&outer_corners, &outer_edges, &outer_mid_edges, &inner_corners, &inner_edges, pixel, 2);
+        pixel.0[0] = r as u8;
+        pixel.0[1] = g as u8;
+        pixel.0[2] = b as u8;
+    })
+}
+
+const OUTER_CORNER_WEIGHT: f32 =   0.0396455;
+const OUTER_EDGE_WEIGHT: f32 =     0.0399107;
+const OUTER_MID_EDGE_WEIGHT: f32 = 0.0399994;
+const INNER_CORNER_WEIGHT: f32 =   0.0401776;
+const INNER_EDGE_WEIGHT: f32 =     0.0402670;
+const SELF_WEIGHT: f32 =           0.0403566;
+fn gauss(
+    outer_corners: &[&Rgba<u8>], outer_edges: &[&Rgba<u8>],
+    outer_mid_edges: &[&Rgba<u8>], inner_corners: &[&Rgba<u8>],
+    inner_edges: &[&Rgba<u8>], s: &Rgba<u8>, i: usize
+) -> f32 {
+    outer_corners.into_iter().map(|p| p.0[i] as f32 * OUTER_CORNER_WEIGHT).sum::<f32>()
+    + outer_edges.into_iter().map(|p| p.0[i] as f32 * OUTER_EDGE_WEIGHT).sum::<f32>()
+    + outer_mid_edges.into_iter().map(|p| p.0[i] as f32 * OUTER_MID_EDGE_WEIGHT).sum::<f32>()
+    + inner_corners.into_iter().map(|p| p.0[i] as f32 * INNER_CORNER_WEIGHT).sum::<f32>()
+    + inner_edges.into_iter().map(|p| p.0[i] as f32 * INNER_EDGE_WEIGHT).sum::<f32>()
+    + s.0[i] as f32 * SELF_WEIGHT
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -296,19 +382,6 @@ impl SendStage {
                 1
             },
             SendStage::End => panic!(),
-        }
-    }
-
-    fn previous(&self) -> Option<SendStage> {
-        match self {
-            SendStage::S64x64 => None,
-            SendStage::S32x32 => Some(SendStage::S64x64),
-            SendStage::S16x16 => Some(SendStage::S32x32),
-            SendStage::S8x8 => Some(SendStage::S16x16),
-            SendStage::S4x4 => Some(SendStage::S8x8),
-            SendStage::S2x2 => Some(SendStage::S4x4),
-            SendStage::S1x1 => Some(SendStage::S2x2),
-            SendStage::End => Some(SendStage::S1x1),
         }
     }
 }

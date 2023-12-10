@@ -2,6 +2,7 @@ use imgui::Context;
 use imgui_wgpu::{Renderer, RendererConfig};
 use imgui_winit_support::WinitPlatform;
 use te_renderer::{initial_config::InitialConfiguration, state::{GpuState, TeState}};
+use wgpu::{Device, Queue};
 use winit::{window::Window, event::WindowEvent};
 
 use crate::ActionTaken;
@@ -78,17 +79,17 @@ impl ImState {
         let action_taken = {
             let mut action_taken = None;
 
-            if let None = action_taken {
-                if let Some(action) = sender_window(ui, &self.data.server) {
+            if let Some(action) = sender_window(ui, &self.data.server) {
+                if let None = action_taken {
                     action_taken = Some(action);
-                };
-            }
+                }
+            };
 
-            if let None = action_taken {
-                if let Some(action) = receiver_window(ui, &self.data.client) {
+            if let Some(action) = receiver_window(ui, &mut self.data.client, &self.gpu.device, &mut self.renderer, &self.gpu.queue) {
+                if let None = action_taken {
                     action_taken = Some(action);
-                };
-            }
+                }
+            };
 
             action_taken
         };
@@ -170,12 +171,16 @@ fn render_state(view: &wgpu::TextureView, state: &mut TeState, gpu: &GpuState) {
     gpu.queue.submit(std::iter::once(encoder.finish()));
 }
 
-fn receiver_window(ui: &mut imgui::Ui, data: &ClientData) -> Option<ActionTaken> {
+fn receiver_window(ui: &mut imgui::Ui, data: &mut ClientData, device: &Device, renderer: &mut Renderer, queue: &Queue) -> Option<ActionTaken> {
     let mut action = None;
     ui.window("Receiver").build(|| {
         imgui::Image::new(data.texture_id, data.size).border_col([1.0, 1.0, 1.0, 1.0]).build(ui);
         if ui.button("Clear") {
             action = Some(ActionTaken::Clear)
+        };
+
+        if ui.checkbox("Blur", &mut data.blur) {
+            data.update_texture(device, renderer, queue)
         }
     });
 
