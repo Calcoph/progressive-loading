@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use rayon::prelude::*;
 
 use image::{ImageBuffer, Rgba};
 use imgui::TextureId;
@@ -243,9 +244,9 @@ fn blur(img: &mut ImageBuffer<Rgba<u8>, Vec<u8>>) {
     let ycl = |y: i32| y.clamp(0, height-1) as u32;
     let copy = img.clone();
 
-    img.enumerate_pixels_mut().for_each(|(x, y, pixel)| {
-        let x = x as i32;
-        let y = y as i32;
+    img.par_chunks_exact_mut(4).enumerate().for_each(|(i, pixel)| {
+        let y = i as i32 / width;
+        let x = i as i32 - y * width;
 
         let outer_corners: Vec<_> = vec![-2,2].into_iter()
             .flat_map(|i| vec![-2, 2].into_iter().map(move |j| (i, j)))
@@ -278,10 +279,10 @@ fn blur(img: &mut ImageBuffer<Rgba<u8>, Vec<u8>>) {
         let r: f32 = gauss(&outer_corners, &outer_edges, &outer_mid_edges, &inner_corners, &inner_edges, pixel, 0);
         let g: f32 = gauss(&outer_corners, &outer_edges, &outer_mid_edges, &inner_corners, &inner_edges, pixel, 1);
         let b: f32 = gauss(&outer_corners, &outer_edges, &outer_mid_edges, &inner_corners, &inner_edges, pixel, 2);
-        pixel.0[0] = r as u8;
-        pixel.0[1] = g as u8;
-        pixel.0[2] = b as u8;
-    })
+        pixel[0] = r as u8;
+        pixel[1] = g as u8;
+        pixel[2] = b as u8;
+    });
 }
 
 const OUTER_CORNER_WEIGHT: f32 =   0.0396455;
@@ -293,14 +294,14 @@ const SELF_WEIGHT: f32 =           0.0403566;
 fn gauss(
     outer_corners: &[&Rgba<u8>], outer_edges: &[&Rgba<u8>],
     outer_mid_edges: &[&Rgba<u8>], inner_corners: &[&Rgba<u8>],
-    inner_edges: &[&Rgba<u8>], s: &Rgba<u8>, i: usize
+    inner_edges: &[&Rgba<u8>], s: &[u8], i: usize
 ) -> f32 {
     outer_corners.into_iter().map(|p| p.0[i] as f32 * OUTER_CORNER_WEIGHT).sum::<f32>()
     + outer_edges.into_iter().map(|p| p.0[i] as f32 * OUTER_EDGE_WEIGHT).sum::<f32>()
     + outer_mid_edges.into_iter().map(|p| p.0[i] as f32 * OUTER_MID_EDGE_WEIGHT).sum::<f32>()
     + inner_corners.into_iter().map(|p| p.0[i] as f32 * INNER_CORNER_WEIGHT).sum::<f32>()
     + inner_edges.into_iter().map(|p| p.0[i] as f32 * INNER_EDGE_WEIGHT).sum::<f32>()
-    + s.0[i] as f32 * SELF_WEIGHT
+    + s[i] as f32 * SELF_WEIGHT
 }
 
 #[derive(Debug, PartialEq, Eq)]

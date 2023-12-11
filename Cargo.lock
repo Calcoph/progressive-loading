@@ -1569,6 +1569,7 @@ dependencies = [
  "imgui-wgpu",
  "imgui-winit-support",
  "pollster",
+ "rayon",
  "te-renderer",
  "wgpu",
  "winit",
